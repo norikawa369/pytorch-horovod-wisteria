@@ -1,0 +1,33 @@
+# pycache
+*__pycache__
+
+# log file
+*.log
+
+# jupyter notebook
+.ipynb_checkpoints
+
+# data files
+*.csv
+*.tsv
+*.pkl
+*.npy
+
+# model
+*.pt
+*.pth
+
+# output
+*.sh.e*
+*.sh.o*
+events.out.tfevents.*
+*.json
+*.err
+*.out
+
+*.d*
+
+# data
+data/RAWDATA/
+*.zip
+*.fasta
