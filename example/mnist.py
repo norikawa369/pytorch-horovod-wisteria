@@ -1,5 +1,12 @@
 import os
 from packaging import version
+from datetime import timedelta
+from functools import wraps
+import logging
+import os
+from time import time
+from typing import Any, Callable
+import warnings
 
 import torch.multiprocessing as mp
 import torch.nn as nn
@@ -17,7 +24,93 @@ import hydra
 from omegaconf import DictConfig
 
 
-from example.init.optimizer import init_optimizer_from_config
+from init.optimizer import init_optimizer_from_config
+
+warnings.filterwarnings('ignore')
+
+def makedirs(path: str, isfile: bool = False) -> None:
+    """
+    Creates a directory given a path to either a directory or file.
+    If a directory is provided, creates that directory. If a file is provided (i.e. :code:`isfile == True`),
+    creates the parent directory for that file.
+    :param path: Path to a directory or file.
+    :param isfile: Whether the provided path is a directory or file.
+    """
+    if isfile:
+        path = os.path.dirname(path)
+    if path != '':
+        os.makedirs(path, exist_ok=True)
+
+def create_logger(name: str, save_dir: str = None, quiet: bool = False) -> logging.Logger:
+    """
+    Creates a logger with a stream handler and two file handlers.
+    If a logger with that name already exists, simply returns that logger.
+    Otherwise, creates a new logger with a stream handler and two file handlers.
+    The stream handler prints to the screen depending on the value of :code:`quiet`.
+    One file handler (:code:`verbose.log`) saves all logs, the other (:code:`quiet.log`) only saves important info.
+    :param name: The name of the logger.
+    :param save_dir: The directory in which to save the logs.
+    :param quiet: Whether the stream handler should be quiet (i.e., print only important info).
+    :return: The logger.
+    """
+
+    if name in logging.root.manager.loggerDict:
+        return logging.getLogger(name)
+
+    logger = logging.getLogger(name)
+
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    # Set logger depending on desired verbosity
+    ch = logging.StreamHandler()
+    if quiet:
+        ch.setLevel(logging.INFO)
+    else:
+        ch.setLevel(logging.DEBUG)
+    logger.addHandler(ch)
+
+    if save_dir is not None:
+        makedirs(save_dir)
+
+        fh_v = logging.FileHandler(os.path.join(save_dir, 'verbose.log'))
+        fh_v.setLevel(logging.DEBUG)
+        fh_q = logging.FileHandler(os.path.join(save_dir, 'quiet.log'))
+        fh_q.setLevel(logging.INFO)
+
+        logger.addHandler(fh_v)
+        logger.addHandler(fh_q)
+
+    return logger
+
+
+def timeit(logger_name: str = None) -> Callable[[Callable], Callable]:
+    """
+    Creates a decorator which wraps a function with a timer that prints the elapsed time.
+    :param logger_name: The name of the logger used to record output. If None, uses :code:`print` instead.
+    :return: A decorator which wraps a function with a timer that prints the elapsed time.
+    """
+    def timeit_decorator(func: Callable) -> Callable:
+        """
+        A decorator which wraps a function with a timer that prints the elapsed time.
+        :param func: The function to wrap with the timer.
+        :return: The function wrapped with the timer.
+        """
+        @wraps(func)
+        def wrap(*args, **kwargs) -> Any:
+            start_time = time()
+            result = func(*args, **kwargs)
+            delta = timedelta(seconds=round(time() - start_time))
+            info = logging.getLogger(logger_name).info if logger_name is not None else print
+            info(f'Elapsed time = {delta}')
+
+            return result
+
+        return wrap
+
+    return timeit_decorator
+
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -36,9 +129,11 @@ class Net(nn.Module):
         x = F.dropout(x, training=self.training)
         x = self.fc2(x)
         return F.log_softmax(x)
+    
+TRAIN_LOGGER_NAME = 'train'
 
-@hydra.main(config_name='config', version_base=None, config_path='conf')
-def main(cfg: DictConfig, ):
+@timeit(logger_name=TRAIN_LOGGER_NAME)
+def main(cfg: DictConfig):
     def train_mixed_precision(epoch, scaler):
         model.train()
         # Horovod: set epoch to sampler for shuffling.
@@ -64,7 +159,7 @@ def main(cfg: DictConfig, ):
             if batch_idx % cfg.training.log_interval == 0:
                 # Horovod: use train_sampler to determine the number of examples in
                 # this worker's partition.
-                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tLoss Scale: {}'.format(
+                debug('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tLoss Scale: {}'.format(
                     epoch, batch_idx * len(data), len(train_sampler),
                            100. * batch_idx / len(train_loader), loss.item(), scaler.get_scale()))
     
@@ -83,7 +178,7 @@ def main(cfg: DictConfig, ):
             if batch_idx % cfg.training.log_interval == 0:
                 # Horovod: use train_sampler to determine the number of examples in
                 # this worker's partition.
-                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                debug('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                     epoch, batch_idx * len(data), len(train_sampler),
                            100. * batch_idx / len(train_loader), loss.item()))
 
@@ -117,9 +212,17 @@ def main(cfg: DictConfig, ):
 
         # Horovod: print output only on first rank.
         if hvd.rank() == 0:
-            print('\nTest set: Average loss: {:.4f}, Accuracy: {:.2f}%\n'.format(
+            debug('\nTest set: Average loss: {:.4f}, Accuracy: {:.2f}%\n'.format(
                 test_loss, 100. * test_accuracy))
+            
+        return test_loss, test_accuracy
 
+
+    logger = create_logger(name=TRAIN_LOGGER_NAME, save_dir=cfg.out_dir, quiet=cfg.quiet)
+    if logger is not None:
+        debug, info = logger.debug, logger.info
+    else:
+        debug = info = print
     # Horovod: initialize library.
     hvd.init()
     torch.manual_seed(cfg.training.seed)
@@ -138,9 +241,10 @@ def main(cfg: DictConfig, ):
                             which requires torch >= 1.6.0""")
 
     # Horovod: limit # of CPU threads to be used per worker.
-    torch.set_num_threads(1)
+    torch.set_num_threads(2)
 
-    kwargs = {'num_workers': 1, 'pin_memory': True} if cfg.training.cuda else {}
+    kwargs = {'num_workers': cfg.training.num_workers}
+    # kwargs = {'num_workers': 1, 'pin_memory': True} if cfg.training.cuda else {}
     # When supported, use 'forkserver' to spawn dataloader workers instead of 'fork' to prevent
     # issues with Infiniband implementations that are not fork-safe
     if (kwargs.get('num_workers', 0) > 0 and hasattr(mp, '_supports_context') and
@@ -159,8 +263,15 @@ def main(cfg: DictConfig, ):
     # Horovod: use DistributedSampler to partition the training data.
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         train_dataset, num_replicas=hvd.size(), rank=hvd.rank())
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=cfg.training.batch_size, sampler=train_sampler, **kwargs)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=cfg.training.batch_size,
+                                            sampler=train_sampler, pin_memory=cfg.training.pin_memory,
+                                            drop_last=cfg.training.drop_last, **kwargs)
+
+    # debug(f'dataset: {len(train_dataset)}')  -> 60000
+    # debug(f'len dataloader:{len(train_loader)}') -> 117
+    # debug(f'len sampler: {len(train_sampler)}')  -> 7500
+    # つまり、train_loader自体も各gpuに分かれている 60000/8=7500 7500/64=117
+
 
     test_dataset = \
         datasets.MNIST(data_dir, train=False, transform=transforms.Compose([
@@ -171,7 +282,7 @@ def main(cfg: DictConfig, ):
     test_sampler = torch.utils.data.distributed.DistributedSampler(
         test_dataset, num_replicas=hvd.size(), rank=hvd.rank())
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=cfg.training.batch_size_test,
-                                              sampler=test_sampler, **kwargs)
+                                              sampler=test_sampler, pin_memory=cfg.training.pin_memory, **kwargs)
 
     model = Net()
 
@@ -190,7 +301,7 @@ def main(cfg: DictConfig, ):
     #                       momentum=args.momentum)
 
     opt_cls, kwargs = init_optimizer_from_config(
-            cfg.optimizer, model.forward_features.parameters()
+            cfg.optimizer, model.parameters()
         )
 
     
@@ -214,12 +325,31 @@ def main(cfg: DictConfig, ):
         # Initialize scaler in global scale
         scaler = torch.cuda.amp.GradScaler()
 
+    best_loss = float('inf')
+
     for epoch in range(1, cfg.training.epochs + 1):
         if cfg.training.use_mixed_precision:
             train_mixed_precision(epoch, scaler)
         else:
             train_epoch(epoch)
         # Keep test in full precision since computation is relatively light.
-        test()
+        test_loss, test_accuracy = test()
+        if hvd.rank() == 0:
+            if test_loss < best_loss:
+                best_loss = test_loss
+                model.to('cpu')
+                # Save the model
+                torch.save(model.state_dict(), os.path.join(cfg.out_dir,'best_model.pth'))
+                model.to(hvd.local_rank())
 
-    
+                debug(f'Saved new best model with loss {best_loss} of epoch{epoch}')
+
+
+@hydra.main(config_path="conf", config_name="config")
+def entry(cfg: DictConfig) -> None:
+    # prepare_env()
+    main(cfg)
+
+
+if __name__ == "__main__":
+    entry()

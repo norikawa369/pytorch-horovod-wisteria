@@ -1,0 +1,4 @@
+- out_dir=./result/mnist/
+- training.log_interval=50
+- training.batch_size=64
+- training.batch_size_test=64

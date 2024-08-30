@@ -27,5 +27,6 @@ pip install typed-argument-parser==1.8.0
 pip install tape-proteins==0.5
 pip install lifelines==0.27.4
 pip install hydra-core
+pip install hydra-colorlog
 
 deactivate

@@ -129,8 +129,9 @@ training:
   epochs: 10
   batch_size: 16
   batch_size_test: 16
+  pin_memory: true
   num_gpus: 1
-  num_workers: 12
+  num_workers: 16
   cuda: true
   drop_last: true  # If true, drop the last incomplete batch in training phase
   use_amp: true  # If true, use 16-bit precision for training
@@ -161,4 +162,6 @@ scheduler:
 # Other essential configs
 #====
 out_dir: ???
+save_dir: ???
+quiet: false
 test_model: null  # If set, only run test with that model

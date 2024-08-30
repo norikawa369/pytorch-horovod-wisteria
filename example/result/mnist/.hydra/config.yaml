@@ -1,0 +1,104 @@
+dataset:
+  type: mnist
+  data_dir: /work/ge58/e58004/projects/pytorch-horovod-wisteria/example/
+  num_classes: ???
+optimizer:
+  type: adam
+  lr: 0.001
+  weight_decay: 1.0e-05
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-08
+  amsgrad: false
+  lr_head: ${optimizer.lr}
+scheduler:
+  type: cosine
+  max_epochs: ${training.epoch}
+  warmup_steps_ratio: 0.2
+  num_cycles: 0.5
+  num_steps_per_epoch: null
+preprocessing:
+  h_resize_to: 1024
+  w_resize_to: 512
+  mean: 0.485
+  std: 0.229
+model:
+  restore_path: ${test_model}
+  base_model: convnext_small.fb_in22k_ft_in1k
+  backbone_class: null
+  freeze_backbone: false
+  head: ${head}
+  output_dim: ${dataset.num_classes}
+  use_multi_view: ${dataset.use_multi_view}
+  use_multi_lat: ${dataset.use_multi_lat}
+  pool: ${pool}
+  use_bn: false
+  in_chans: 1
+  grad_checkpointing: false
+pool:
+  type: gem_ch
+  p: 3
+  p_trainable: true
+head:
+  type: linear
+forwarder:
+  use_multi_view: ${dataset.use_multi_view}
+  use_multi_lat: ${dataset.use_multi_lat}
+  loss:
+    cancer_weight: 1.0
+    biopsy_weight: 0.0
+    invasive_weight: 0.0
+    birads_weight: 0.0
+    difficult_negative_case_weight: 0.0
+    age_weight: 0.0
+    machine_id_weight: 0.0
+    site_id_weight: 0.0
+    pr_auc_weight: 0.0
+augmentation:
+  use_light_aug: false
+  use_aug: false
+  use_heavy_aug: false
+  rotate: 15
+  translate: 0.25
+  shear: 3
+  p_affine: 0.5
+  crop_scale: 0.9
+  crop_l: 0.75
+  crop_r: 1.3333333333333333
+  p_gray: 0.1
+  p_blur: 0.05
+  p_noise: 0.05
+  p_downscale: 0.0
+  p_shuffle: 0.3
+  p_posterize: 0.2
+  p_bright_contrast: 0.5
+  p_cutout: 0.05
+training:
+  project_name: pytorch-horovod
+  resume_from: null
+  debug: false
+  use_wandb: false
+  seed: 0
+  monitor: val/mean_auc
+  monitor_mode: max
+  gradient_clip_val: 0.5
+  accumulate_grad_batches: 1
+  save_embed: false
+  epochs: 10
+  batch_size: 64
+  batch_size_test: 64
+  pin_memory: true
+  num_gpus: 1
+  num_workers: 16
+  cuda: true
+  drop_last: true
+  use_amp: true
+  use_mixed_precision: true
+  log_interval: 50
+  use_adasum: false
+  fp16_allreduce: true
+  gradient_predivide_factor: 1.0
+out_dir: ./result/mnist/
+save_dir: ???
+quiet: false
+test_model: null
