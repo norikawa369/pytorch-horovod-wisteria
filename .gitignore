@@ -16,7 +16,7 @@
 *.pkl
 *.npy
 */MNIST
-*/.hydra
+**/.hydra
 
 # model
 *.pt
